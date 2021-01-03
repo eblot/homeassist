@@ -9,7 +9,9 @@ The excellent alternative firmware for [Mi Thermometer](https://github.com/atc14
 - humidity
 - battery level
 
-This plugin integrates those data into Home Assistant.
+This plugin integrates those data into Home Assistant:
+
+<img src="ble_ess_mi/doc/images/ha_icons.png" width="33%" height="33%">
 
 The plugin is built around two components:
 - a bridge that collects BLE advertisements and forward them as JSON data over a TCP connection
