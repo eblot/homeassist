@@ -1,0 +1,8 @@
+{
+  "domain": "ble_ess_mi",
+  "name": "Xiaomi BLE Temperature and Humidity Sensor (Custom FW)",
+  "documentation": "https://www.home-assistant.io/integrations/ble_ess_mi",
+  "requirements": [],
+  "codeowners": []
+}
+

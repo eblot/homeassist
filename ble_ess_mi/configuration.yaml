@@ -1,0 +1,13 @@
+
+sensor:
+    platform: ble_ess_mi
+    host: bridge
+    mac: 'A4:C1:38:00:00:00'
+    name: 'Room'
+    monitored_conditions:
+        - temperature
+        - humidity
+        - battery
+        - battery_v
+        - rssi
+
