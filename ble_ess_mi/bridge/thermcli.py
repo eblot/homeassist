@@ -11,7 +11,7 @@ from sys import exit as sysexit, modules, stderr
 from threading import Lock, Thread
 from time import sleep, time as now
 from traceback import print_exc
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Set, Union
 
 class MiTempClient:
 
@@ -24,7 +24,7 @@ class MiTempClient:
         self._address = address
         self._port = port
         self._history = history if history != 0 else self.DEFAULT_HISTORY
-        self._values: Dict[str, Dict[str, Any]] = dict()
+        self._devices: Dict[str, Dict[str, Any]] = dict()
         self._lock = Lock()
         self._thread = Thread(target=self._run, name='MiTempClient',
                               daemon=True)
@@ -40,10 +40,14 @@ class MiTempClient:
         self._thread.join()
         self._log.info('Bye')
 
+    @property
+    def thermometers(self) -> Set[str]:
+        return set(self._devices)
+
     def get_thermometer(self, mac: str) -> Optional[Dict[str, Any]]:
         mac = mac.upper()
         with self._lock:
-            return self._values.get(mac, None)
+            return self._devices.get(mac, None)
 
     def _run(self):
         try:
@@ -100,19 +104,19 @@ class MiTempClient:
             return
         data['timestamp'] = now()
         with self._lock:
-            self._values[data['mac'].upper()] = data
+            self._devices[data['mac'].upper()] = data
 
     def _prune(self, delay: float):
         ts = now()
         oldest = ts-delay
         self._log.debug('pruning unseen devices for %.1fs', delay)
         with self._lock:
-            candidates = {mac for mac in self._values
-                          if self._values[mac]['timestamp'] < oldest}
+            candidates = {mac for mac in self._devices
+                          if self._devices[mac]['timestamp'] < oldest}
             for mac in candidates:
                 self._log.info('Pruning %s, not seen for %.3fs',
-                               mac, ts-self._values[mac]['timestamp'])
-                del self._values[mac]
+                               mac, ts-self._devices[mac]['timestamp'])
+                del self._devices[mac]
 
 
 def configure_logger(verbosity: int, debug: bool) -> None:
@@ -141,10 +145,13 @@ def show_temperatures(client, macs: List[str], timeout: Union[float, int]):
     if timeout:
         timeout = now() + float(timeout)
     ts = dict()
-    macs = [mac.upper() for mac in macs]
+    if macs:
+        fmacs = [mac.upper() for mac in macs]
     while not timeout or now() < timeout:
+        if not macs:
+            fmacs = client.thermometers
         devices = list(filter(None, [client.get_thermometer(mac)
-                                     for mac in macs]))
+                                     for mac in fmacs]))
         if not devices:
             sleep(1)
             continue
@@ -175,7 +182,7 @@ def main() -> None:
                             help='Connect to specified port (default: 9999)')
         server.add_argument('-t', '--timeout', type=float, default=None,
                             help='Auto stop after timeout seconds')
-        server.add_argument('-m', '--mac', required=True, action='append',
+        server.add_argument('-m', '--mac', action='append', default=[],
                             help='Show thermometers (by BLE MAC address)')
         server.add_argument('-f', '--prune', type=float,
                             help='Set the delay before pruning unseen devices')
