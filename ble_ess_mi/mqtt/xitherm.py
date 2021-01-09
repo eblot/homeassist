@@ -6,26 +6,51 @@
 # Require Bleson https://github.com/TheCellule/python-bleson
 
 from argparse import ArgumentParser
-from binascii import hexlify
-from collections import deque
 from json import dumps as jdumps
 from logging import (DEBUG, ERROR, Formatter, Logger, NullHandler,
                      StreamHandler, getLogger)
 from pprint import pprint
-from socketserver import StreamRequestHandler, ThreadingTCPServer
+from socket import gethostname
 from struct import unpack as sunpack, calcsize as scalc
 from sys import exit as sysexit, modules, stderr
-from threading import Event, Lock
 from traceback import print_exc
-from typing import Deque, NamedTuple, Set
+from typing import Iterable, Optional, Set
 # workaround to prevent Bleson to setup up a logging basicConfig
 Logger.root.addHandler(NullHandler())
 from bleson import get_provider, logger, Observer
+from paho.mqtt.client import Client, connack_string
 
 
-class Channel(NamedTuple):
-    queue: Deque
-    event: Event
+class MqttClient(Client):
+
+    def __init__(self, *args, **kwargs):
+        self._log = getLogger('xitherm.mqtt')
+        super().__init__(*args, **kwargs)
+    
+    def connect(self, host: str, port: int, username: Optional[str] = None,
+                password: Optional[str] = None) -> None:
+        self.enable_logger(self._log)
+        self._log.info('Connect to %s:%d', host, port)
+        if username or password:
+            self.username_pw_set(username, password)
+        self.loop_start()
+        super().connect(host, port)
+
+    def disconnect(self):
+        super().disconnect()
+        super().loop_stop()
+
+    def on_connect(self, client, userdata, flags, rc):
+        if not rc:
+            self._log.info('Connected')
+        else:
+            self._log.error('Cannot connect: %s', connack_string(rc))
+
+    #def on_disconnect(self, client, userdata, rc):
+    #    self._log.info('Disconnected')
+
+    #def on_publish(self, client, userdata, mid):
+    #    self._log.info('Published')
 
 
 class XiaomiThermometer(Observer):
@@ -42,17 +67,22 @@ class XiaomiThermometer(Observer):
     ESS = 0x181a  # Environmental Sensing Service
     SERVICE_FMT = 'H6shBBHB'
 
-    def __init__(self):
+    def __init__(self, mqtt: MqttClient):
         self._log = getLogger('xitherm.ble')
-        self._log.debug('>')
         adapter = get_provider().get_adapter()
-        self._log.debug('adapter %s', adapter)
         super().__init__(adapter)
         self.on_advertising_data = self._handle_advertisement
-        self._log.debug('<')
+        self._mqtt = mqtt
+        self._publish: Set[str] = set()
+        host = gethostname()
+        self._source = f'xitherm/{host}'
 
+    def start(self, publish: Iterable[str]):
+        self._publish.update(publish)
+        super().start()
+
+    # --- BLESON API ---
     def _handle_advertisement(self, adv):
-        self._log.debug('adv')
         data = adv.service_data
         if not data:
             return
@@ -76,19 +106,25 @@ class XiaomiThermometer(Observer):
             return
         temp = float(temp)/10.0
         batv = float(batv)/1000.0
-        json = {
+        payload = {
              'mac': adv.address.address,
-             'temperature': temp,
+             'temperature_C': temp,
              'humidity': humi,
              'battery': bat,
              'battery_v': batv,
              'packet': packet,
              'rssi': adv.rssi,
         }
-        jstr = f'{jdumps(json)}\n'
-        jbytes = jstr.encode()
-        pprint(json)
-
+        if 'event' in self._publish:
+            jstr = f'{jdumps(payload)}\n'
+            jbytes = jstr.encode()
+            self._mqtt.publish(f'{self._source}/events', jbytes)
+        if 'device' in self._publish:
+            mac = adv.address.address
+            for name, val in payload.items():
+                if name == 'mac':
+                    continue
+                self._mqtt.publish(f'{self._source}/devices/{mac}/{name}', val)
 
 def configure_logger(verbosity: int, debug: bool) -> None:
     """Configure logger format and verbosity.
@@ -118,6 +154,22 @@ def main() -> None:
         module = modules[__name__]
         argparser = ArgumentParser(description=module.__doc__)
 
+        extra = argparser.add_argument_group(title='Mqtt')
+        extra.add_argument('host', nargs=1,
+                           help='MQTT server')
+        extra.add_argument('-p', '--port', type=int, default=1883,
+                           help='MQTT port')
+        extra.add_argument('-u', '--user',
+                           help='MQTT username')
+        extra.add_argument('-P', '--password',
+                           help='MQTT password')
+        extra.add_argument('-e', '--event', action='store_true',
+                           default=False,
+                           help='MQTT publish events (JSON payload')
+        extra.add_argument('-c', '--device', action='store_true',
+                           default=False,
+                           help='MQTT publish device values (scalar payload)')
+
         extra = argparser.add_argument_group(title='Extras')
         extra.add_argument('-v', '--verbose', action='count', default=0,
                            help='Increase verbosity')
@@ -127,10 +179,15 @@ def main() -> None:
         args = argparser.parse_args()
         debug = args.debug
         configure_logger(args.verbose, debug)
-        therm = XiaomiThermometer()
-        therm.start()
+        mqtt = MqttClient()
+        mqtt.connect(args.host[0], args.port, args.user, args.password)
+        therm = XiaomiThermometer(mqtt)
+        publish = [kind for kind in ('event', 'device') if getattr(args, kind)]
+        if not publish:
+            argparser.error('Nothing to publish')
+        therm.start(publish)
         from time import sleep
-        sleep(5)
+        sleep(30)
         therm.stop()
     except (IOError, OSError, ValueError) as exc:
         print('Error: %s' % exc, file=stderr)
