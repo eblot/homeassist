@@ -52,7 +52,7 @@ class XiaomiThermometer(Observer):
     def connect(self) -> Channel:
         with self._qlock:
             # limit the size of each queue, so that any orphean queue does not
-            # keep growing 
+            # keep growing
             channel = Channel(deque(maxlen=8), Event())
             channel.event.clear()
             self._channels.append(channel)
@@ -129,7 +129,7 @@ class ThermometerHandler(StreamRequestHandler):
         self._channel = self.server.thermometer.connect()
         self._peer = self.request.getpeername()
         self._log.info('New client %s:%d', *self._peer)
-    
+
     def handle(self):
         conn = self.request
         while True:
