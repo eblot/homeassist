@@ -228,10 +228,12 @@ def main() -> None:
         if args.config:
             cfg = ConfigParser()
             cfg.read_file(args.config)
-            # really basic parser: to not care about sections, only options
-            # do not check whether an entry is valid or not
             for section in cfg.sections():
                 for opt in cfg.options(section):
+                    try:
+                        getattr(args, opt)
+                    except AttributeError as exc:
+                        raise ValueError(f'Unkown config [{section}] {opt}')
                     vargs[opt] = cfg.get(section, opt)
         for opt, val in vars(args).items():
             if val is not None or opt not in vargs:
